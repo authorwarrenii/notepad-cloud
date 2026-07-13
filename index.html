@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cloud Synchronization</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; background: #f8f9fa; color: #212529; text-align: center;}
+    .card { background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); max-width: 400px; margin: 0 auto 20px;}
+    h3 { margin-bottom: 8px; font-size: 20px; }
+    p { font-size: 14px; color: #6c757d; margin-bottom: 20px; line-height: 1.4; }
+    button { background: #007bff; color: white; border: none; padding: 14px 24px; font-size: 16px; font-weight: 600; border-radius: 8px; cursor: pointer; width: 100%; margin: 8px 0; transition: opacity 0.2s; }
+    button:active { opacity: 0.8; }
+    button.download { background: #28a745; }
+    .status { margin-top: 16px; font-size: 14px; font-weight: bold; color: #495057; }
+    .timestamp { margin-top: 6px; font-size: 12px; color: #6c757d; font-style: italic; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h3>☁️ Cloud Storage Control</h3>
+    <p>Backup local files or pull your notes down onto a new device.</p>
+    
+    <button onclick="backupToCloud()">📤 Upload All Notes</button>
+    <button class="download" onclick="restoreFromCloud()">📥 Download All Notes</button>
+    
+    <div id="status-box" class="status">Ready</div>
+    <div id="sync-time" class="timestamp"></div>
+  </div>
+
+  <script>
+    const API_URL = "https://sheetdb.io";
+    
+    // AppCreator24 unique user identifier token tracking
+    const userId = localStorage.getItem('app_user_id') || 'user_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('app_user_id', userId);
+
+    // Render the last known sync timestamp when the screen opens
+    function loadSavedTimestamp() {
+      const savedTime = localStorage.getItem('app_last_sync');
+      if (savedTime) {
+        document.getElementById('sync-time').innerText = `Last Synced: ${savedTime}`;
+      }
+    }
+
+    function updateSyncTimestamp() {
+      const now = new Date();
+      const formattedTime = now.toLocaleString(undefined, { 
+        dateStyle: 'medium', 
+        timeStyle: 'short' 
+      });
+      localStorage.setItem('app_last_sync', formattedTime);
+      document.getElementById('sync-time').innerText = `Last Synced: ${formattedTime}`;
+    }
+
+    async function backupToCloud() {
+      const status = document.getElementById('status-box');
+      const localNotes = JSON.parse(localStorage.getItem('app_notes')) || [];
+      
+      if(localNotes.length === 0) {
+        status.innerText = "❌ No notes found locally to upload.";
+        return;
+      }
+      
+      status.innerText = "Clean updating cloud files...";
+      
+      try {
+        // 1. Wipe previous backups for this user id using wildcard strings (*userId*) to avoid data duplication
+        await fetch(`${API_URL}/UserID/*${userId}*`, { method: 'DELETE' });
+        
+        // 2. Prepare payload bundle
+        const rows = localNotes.map(note => ({
+          UserID: userId,
+          NoteID: note.id,
+          Title: note.title,
+          Content: note.content
+        }));
+
+        // 3. Post to Google sheet
+        const response = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: rows })
+        });
+
+        if(response.ok) {
+          status.innerText = "✅ Backup Complete! Saved to cloud.";
+          updateSyncTimestamp();
+        } else {
+          status.innerText = "❌ Upload failed. Check connectivity.";
+        }
+      } catch (err) {
+        status.innerText = "❌ Error reaching sync server.";
+      }
+    }
+
+    async function restoreFromCloud() {
+      const status = document.getElementById('status-box');
+      status.innerText = "Fetching backups...";
+
+      try {
+        const response = await fetch(`${API_URL}/search?UserID=${userId}`);
+        const cloudData = await response.json();
+
+        if(!cloudData || cloudData.length === 0) {
+          status.innerText = "❌ No cloud backup found for this account.";
+          return;
+        }
+
+        // Map Sheet format data back into the App Engine schema format
+        const restoredNotes = cloudData.map(item => ({
+          id: parseInt(item.NoteID),
+          title: item.Title,
+          content: item.Content,
+          deleted: false,
+          createdAt: parseInt(item.NoteID),
+          updatedAt: Date.now()
+        }));
+
+        localStorage.setItem('app_notes', JSON.stringify(restoredNotes));
+        status.innerText = "✅ Success! Notes restored. Return to your notepad screen.";
+        updateSyncTimestamp();
+      } catch(err) {
+        status.innerText = "❌ Sync recovery failed.";
+      }
+    }
+
+    // Initialize display timestamp on entry
+    window.onload = loadSavedTimestamp;
+  </script>
+</body>
+</html>
